@@ -10,3 +10,5 @@ python-jose[cryptography]
 python-multipart
 google-auth
 python-dotenv
+psycopg2-binary
+psycopg2-binary

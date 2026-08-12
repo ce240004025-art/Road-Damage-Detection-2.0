@@ -6,7 +6,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Body,
-    BackgroundTasks
+    BackgroundTasks,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +19,7 @@ import os
 import shutil
 import hashlib
 import smtplib
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -37,12 +38,11 @@ from sqlalchemy import (
     Column,
     Integer,
     String,
-    Float
+    Float,
 )
-
 from sqlalchemy.orm import (
     sessionmaker,
-    declarative_base
+    declarative_base,
 )
 
 
@@ -55,68 +55,94 @@ load_dotenv()
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "")
 
+SECRET_KEY = os.environ.get(
+    "SECRET_KEY",
+    "road_damage_secret_key_change_this",
+)
 
-# ============================================================
-# WELCOME EMAIL
-# ============================================================
+ALGORITHM = "HS256"
 
-def send_welcome_email(to_email: str, username: str):
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-    if not EMAIL_SENDER or not EMAIL_PASSWORD:
-        print(
-            f"Skipping welcome email for {to_email}: "
-            "EMAIL_SENDER or EMAIL_PASSWORD not set in .env"
-        )
-        return
-
-    try:
-        msg = MIMEMultipart()
-
-        msg["From"] = EMAIL_SENDER
-        msg["To"] = to_email
-        msg["Subject"] = "Welcome to Road Damage Scanner!"
-
-        body = (
-            f"Hi {username},\n\n"
-            "Welcome to Road Damage Scanner! "
-            "We're excited to have you on board.\n\n"
-            "Start uploading images of road damage "
-            "to help keep the streets safe, and earn points "
-            "while you do it!\n\n"
-            "Best,\n"
-            "The Road Damage Scanner Team"
-        )
-
-        msg.attach(MIMEText(body, "plain"))
-
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-
-        print(f"Welcome email sent successfully to {to_email}")
-
-    except Exception as e:
-        print(f"Failed to send email to {to_email}: {e}")
+GOOGLE_CLIENT_ID = os.environ.get(
+    "GOOGLE_CLIENT_ID",
+    "",
+)
 
 
 # ============================================================
 # DATABASE
 # ============================================================
 
-DATABASE_URL = "sqlite:///./reports.db"
+# IMPORTANT:
+# Render:
+#   DATABASE_URL = PostgreSQL connection string
+#
+# Local development:
+#   If DATABASE_URL is not present, SQLite is used.
+
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "sqlite:///./reports.db",
+)
+
+
+# Some PostgreSQL services may provide:
+# postgres://...
+#
+# SQLAlchemy expects:
+# postgresql://...
+
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgres://",
+        "postgresql://",
+        1,
+    )
+
+
+# SQLAlchemy + newer PostgreSQL drivers
+# Use psycopg2 when the URL does not specify a driver.
+
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgresql://",
+        "postgresql+psycopg2://",
+        1,
+    )
+
+
+if DATABASE_URL.startswith("postgresql"):
+    DATABASE_TYPE = "PostgreSQL"
+else:
+    DATABASE_TYPE = "SQLite"
+
+
+print(f"Database type: {DATABASE_TYPE}")
+
+
+# SQLite requires check_same_thread=False.
+connect_args = {}
+
+if DATABASE_URL.startswith("sqlite"):
+    connect_args = {
+        "check_same_thread": False,
+    }
+
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={
-        "check_same_thread": False
-    }
+    connect_args=connect_args,
+    pool_pre_ping=True,
 )
 
+
 SessionLocal = sessionmaker(
-    bind=engine
+    bind=engine,
+    autoflush=False,
+    autocommit=False,
 )
+
 
 Base = declarative_base()
 
@@ -132,43 +158,46 @@ class Report(Base):
     id = Column(
         Integer,
         primary_key=True,
-        index=True
+        index=True,
     )
 
     image_path = Column(
-        String
+        String,
     )
 
     username = Column(
-        String
+        String,
     )
 
     damage_type = Column(
-        String
+        String,
     )
 
     confidence = Column(
-        Float
+        Float,
     )
 
     points = Column(
-        Integer
+        Integer,
     )
 
     latitude = Column(
-        Float
+        Float,
+        nullable=True,
     )
 
     longitude = Column(
-        Float
+        Float,
+        nullable=True,
     )
 
     timestamp = Column(
-        String
+        String,
     )
 
     image_hash = Column(
-        String
+        String,
+        index=True,
     )
 
 
@@ -183,101 +212,168 @@ class User(Base):
     id = Column(
         Integer,
         primary_key=True,
-        index=True
+        index=True,
     )
 
     username = Column(
         String,
         unique=True,
-        index=True
+        index=True,
     )
 
     email = Column(
         String,
         unique=True,
-        index=True
+        index=True,
     )
 
     password = Column(
-        String
+        String,
     )
 
     total_points = Column(
         Integer,
-        default=0
+        default=0,
     )
 
 
+# ============================================================
+# CREATE DATABASE TABLES
+# ============================================================
+
 Base.metadata.create_all(
-    bind=engine
+    bind=engine,
+)
+
+print(
+    "Database tables verified successfully."
 )
 
 
 # ============================================================
-# AUTHENTICATION
+# WELCOME EMAIL
 # ============================================================
 
-SECRET_KEY = os.environ.get(
-    "SECRET_KEY",
-    "road_damage_secret_key"
-)
+def send_welcome_email(
+    to_email: str,
+    username: str,
+):
 
-ALGORITHM = "HS256"
+    if not EMAIL_SENDER or not EMAIL_PASSWORD:
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+        print(
+            f"Skipping welcome email for {to_email}: "
+            "EMAIL_SENDER or EMAIL_PASSWORD not set"
+        )
 
-GOOGLE_CLIENT_ID = os.environ.get(
-    "GOOGLE_CLIENT_ID",
-    ""
-)
+        return
+
+    try:
+
+        msg = MIMEMultipart()
+
+        msg["From"] = EMAIL_SENDER
+        msg["To"] = to_email
+        msg["Subject"] = (
+            "Welcome to Road Damage Scanner!"
+        )
+
+        body = (
+            f"Hi {username},\n\n"
+            "Welcome to Road Damage Scanner! "
+            "We're excited to have you on board.\n\n"
+            "Start uploading images of road damage "
+            "to help keep the streets safe, and earn "
+            "points while you do it!\n\n"
+            "Best,\n"
+            "The Road Damage Scanner Team"
+        )
+
+        msg.attach(
+            MIMEText(
+                body,
+                "plain",
+            )
+        )
+
+        server = smtplib.SMTP(
+            "smtp.gmail.com",
+            587,
+        )
+
+        server.starttls()
+
+        server.login(
+            EMAIL_SENDER,
+            EMAIL_PASSWORD,
+        )
+
+        server.send_message(msg)
+
+        server.quit()
+
+        print(
+            f"Welcome email sent successfully to "
+            f"{to_email}"
+        )
+
+    except Exception as e:
+
+        print(
+            f"Failed to send email to {to_email}: {e}"
+        )
+
+
+# ============================================================
+# PASSWORD / JWT
+# ============================================================
 
 pwd_context = CryptContext(
     schemes=["bcrypt"],
-    deprecated="auto"
+    deprecated="auto",
 )
 
 
-def hash_password(password):
+def hash_password(password: str):
 
-    # Prevent bcrypt 72-byte error
+    # bcrypt supports a maximum of 72 bytes.
     password = password[:72]
 
     return pwd_context.hash(
-        password
+        password,
     )
 
 
 def verify_password(
-    password,
-    hashed_password
+    password: str,
+    hashed_password: str,
 ):
 
     password = password[:72]
 
     return pwd_context.verify(
         password,
-        hashed_password
+        hashed_password,
     )
 
 
-def create_token(data):
+def create_token(data: dict):
 
-    expire = datetime.now(
-        timezone.utc
-    ) + timedelta(
-        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+    expire = (
+        datetime.now(timezone.utc)
+        + timedelta(
+            minutes=ACCESS_TOKEN_EXPIRE_MINUTES,
+        )
     )
 
-    data.update(
-        {
-            "exp": expire
-        }
-    )
+    token_data = data.copy()
+
+    token_data["exp"] = expire
 
     return jwt.encode(
-        data,
+        token_data,
         SECRET_KEY,
-        algorithm=ALGORITHM
+        algorithm=ALGORITHM,
     )
 
 
@@ -285,24 +381,30 @@ def create_token(data):
 # FASTAPI APP
 # ============================================================
 
-app = FastAPI()
+app = FastAPI(
+    title="Road Damage Reporting and Monitoring System",
+    version="2.0",
+)
 
 
 # ============================================================
 # UPLOAD DIRECTORY
 # ============================================================
 
+UPLOAD_DIR = "uploads"
+
 os.makedirs(
-    "uploads",
-    exist_ok=True
+    UPLOAD_DIR,
+    exist_ok=True,
 )
+
 
 app.mount(
     "/uploads",
     StaticFiles(
-        directory="uploads"
+        directory=UPLOAD_DIR,
     ),
-    name="uploads"
+    name="uploads",
 )
 
 
@@ -310,12 +412,50 @@ app.mount(
 # CORS
 # ============================================================
 
+# Set FRONTEND_URL on Render to your deployed frontend URL.
+#
+# Example:
+# FRONTEND_URL=https://your-frontend.onrender.com
+
+FRONTEND_URL = os.environ.get(
+    "FRONTEND_URL",
+    "",
+)
+
+
+if FRONTEND_URL:
+
+    ALLOWED_ORIGINS = [
+        origin.strip().rstrip("/")
+        for origin in FRONTEND_URL.split(",")
+        if origin.strip()
+    ]
+
+else:
+
+    # Local development fallback.
+    ALLOWED_ORIGINS = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+
+    allow_origins=ALLOWED_ORIGINS,
+
     allow_credentials=True,
+
     allow_methods=["*"],
+
     allow_headers=["*"],
+)
+
+
+print(
+    "Allowed frontend origins:",
+    ALLOWED_ORIGINS,
 )
 
 
@@ -323,20 +463,54 @@ app.add_middleware(
 # CNN MODEL
 # ============================================================
 
-MODEL_PATH = "../road_damage_cnn.keras"
+# This works when Render starts the service from backend/
+# and your model is located one level above backend/.
+
+MODEL_PATH = os.environ.get(
+    "MODEL_PATH",
+    "../road_damage_cnn.keras",
+)
+
+
+# Convert to absolute path so the location is easier to debug.
+MODEL_PATH = os.path.abspath(
+    MODEL_PATH,
+)
+
+
+print(
+    "Loading CNN model from:",
+    MODEL_PATH,
+)
+
+
+if not os.path.exists(MODEL_PATH):
+
+    raise FileNotFoundError(
+        f"CNN model not found at: {MODEL_PATH}"
+    )
+
 
 model = tf.keras.models.load_model(
-    MODEL_PATH
+    MODEL_PATH,
 )
+
 
 CLASS_NAMES = [
     "crack",
     "no_damage",
-    "pothole"
+    "pothole",
 ]
 
-print("CNN model loaded successfully.")
-print("Classes:", CLASS_NAMES)
+
+print(
+    "CNN model loaded successfully."
+)
+
+print(
+    "Classes:",
+    CLASS_NAMES,
+)
 
 
 # ============================================================
@@ -348,9 +522,11 @@ def get_db():
     db = SessionLocal()
 
     try:
+
         yield db
 
     finally:
+
         db.close()
 
 
@@ -362,7 +538,24 @@ def get_db():
 def home():
 
     return {
-        "message": "Backend is running"
+        "message": "Backend is running",
+        "database": DATABASE_TYPE,
+        "model": "CNN",
+        "classes": CLASS_NAMES,
+    }
+
+
+# ============================================================
+# HEALTH CHECK
+# ============================================================
+
+@app.get("/health")
+def health():
+
+    return {
+        "status": "healthy",
+        "database": DATABASE_TYPE,
+        "model_loaded": model is not None,
     }
 
 
@@ -376,50 +569,94 @@ def register(
     username: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
-    db=Depends(get_db)
+    db=Depends(get_db),
 ):
 
-    # Check email
-    existing_email = db.query(User).filter(
-        User.email == email
-    ).first()
+    username = username.strip()
+    email = email.strip().lower()
+
+    if not username:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Username cannot be empty",
+        )
+
+    if not email:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Email cannot be empty",
+        )
+
+    if len(password) == 0:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Password cannot be empty",
+        )
+
+
+    # Check email.
+
+    existing_email = (
+        db.query(User)
+        .filter(
+            User.email == email
+        )
+        .first()
+    )
 
     if existing_email:
+
         raise HTTPException(
             status_code=400,
-            detail="Email already registered"
+            detail="Email already registered",
         )
 
-    # Check username
-    existing_username = db.query(User).filter(
-        User.username == username
-    ).first()
+
+    # Check username.
+
+    existing_username = (
+        db.query(User)
+        .filter(
+            User.username == username
+        )
+        .first()
+    )
 
     if existing_username:
+
         raise HTTPException(
             status_code=400,
-            detail="Username already taken"
+            detail="Username already taken",
         )
+
 
     new_user = User(
         username=username,
         email=email,
         password=hash_password(password),
-        total_points=0
+        total_points=0,
     )
+
 
     db.add(new_user)
 
     db.commit()
 
+    db.refresh(new_user)
+
+
     background_tasks.add_task(
         send_welcome_email,
         email,
-        username
+        username,
     )
 
+
     return {
-        "message": "User created successfully"
+        "message": "User created successfully",
     }
 
 
@@ -431,51 +668,85 @@ def register(
 def login(
     email: str = Form(...),
     password: str = Form(...),
-    db=Depends(get_db)
+    db=Depends(get_db),
 ):
 
-    user = db.query(User).filter(
-        User.email == email
-    ).first()
+    email = email.strip().lower()
+
+
+    user = (
+        db.query(User)
+        .filter(
+            User.email == email
+        )
+        .first()
+    )
+
 
     if not user:
+
         raise HTTPException(
             status_code=401,
-            detail="Invalid email or password"
+            detail="Invalid email or password",
         )
+
+
+    if not user.password:
+
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "This account uses Google login. "
+                "Please continue with Google."
+            ),
+        )
+
 
     if not verify_password(
         password,
-        user.password
+        user.password,
     ):
+
         raise HTTPException(
             status_code=401,
-            detail="Invalid email or password"
+            detail="Invalid email or password",
         )
+
 
     token = create_token(
         {
-            "sub": user.email
+            "sub": user.email,
         }
     )
+
 
     return {
         "access_token": token,
         "token_type": "bearer",
-        "username": user.username
+        "username": user.username,
     }
 
 
 # ============================================================
-# GOOGLE AUTH
+# GOOGLE AUTHENTICATION
 # ============================================================
 
 @app.post("/auth/google")
 def google_auth(
     background_tasks: BackgroundTasks,
     token: str = Body(..., embed=True),
-    db=Depends(get_db)
+    db=Depends(get_db),
 ):
+
+    if not GOOGLE_CLIENT_ID:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "GOOGLE_CLIENT_ID is not configured"
+            ),
+        )
+
 
     try:
 
@@ -483,7 +754,7 @@ def google_auth(
             token,
             google_requests.Request(),
             GOOGLE_CLIENT_ID,
-            clock_skew_in_seconds=10
+            clock_skew_in_seconds=10,
         )
 
     except ValueError as e:
@@ -494,41 +765,77 @@ def google_auth(
 
         raise HTTPException(
             status_code=401,
-            detail=f"Invalid Google token: {str(e)}"
+            detail=(
+                f"Invalid Google token: {str(e)}"
+            ),
         )
 
-    email = idinfo["email"]
+
+    email = idinfo.get(
+        "email",
+        "",
+    ).strip().lower()
+
+
+    if not email:
+
+        raise HTTPException(
+            status_code=401,
+            detail="Google account email not available",
+        )
+
 
     name = idinfo.get(
         "name",
-        email.split("@")[0]
+        email.split("@")[0],
     )
 
-    user = db.query(User).filter(
-        User.email == email
-    ).first()
+
+    user = (
+        db.query(User)
+        .filter(
+            User.email == email
+        )
+        .first()
+    )
+
+
+    # Create account automatically for
+    # first-time Google users.
 
     if not user:
 
-        # Make Google username unique
-        username = name
+        username = name.strip()
 
-        existing_username = db.query(User).filter(
-            User.username == username
-        ).first()
+        if not username:
+
+            username = email.split("@")[0]
+
+
+        existing_username = (
+            db.query(User)
+            .filter(
+                User.username == username
+            )
+            .first()
+        )
+
 
         if existing_username:
+
             username = (
                 email.split("@")[0]
                 + "_google"
             )
 
+
         user = User(
             username=username,
             email=email,
             password="",
-            total_points=0
+            total_points=0,
         )
+
 
         db.add(user)
 
@@ -536,22 +843,25 @@ def google_auth(
 
         db.refresh(user)
 
+
         background_tasks.add_task(
             send_welcome_email,
             email,
-            user.username
+            user.username,
         )
+
 
     access_token = create_token(
         {
-            "sub": user.email
+            "sub": user.email,
         }
     )
+
 
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "username": user.username
+        "username": user.username,
     }
 
 
@@ -565,66 +875,167 @@ async def upload_image(
     username: str = Form(...),
     latitude: float = Form(None),
     longitude: float = Form(None),
-    db=Depends(get_db)
+    db=Depends(get_db),
 ):
 
-    # --------------------------------------------------------
-    # Save uploaded image
-    # --------------------------------------------------------
+    username = username.strip()
 
-    upload_dir = "uploads"
 
-    os.makedirs(
-        upload_dir,
-        exist_ok=True
-    )
+    if not username:
 
-    file_path = os.path.join(
-        upload_dir,
-        file.filename
-    ).replace("\\", "/")
-
-    with open(
-        file_path,
-        "wb"
-    ) as buffer:
-
-        shutil.copyfileobj(
-            file.file,
-            buffer
+        raise HTTPException(
+            status_code=400,
+            detail="Username is required",
         )
 
 
     # --------------------------------------------------------
-    # Create image hash
+    # Check user
     # --------------------------------------------------------
 
-    with open(
-        file_path,
-        "rb"
-    ) as f:
+    user = (
+        db.query(User)
+        .filter(
+            User.username == username
+        )
+        .first()
+    )
 
-        image_hash = hashlib.sha256(
-            f.read()
-        ).hexdigest()
+
+    if not user:
+
+        raise HTTPException(
+            status_code=404,
+            detail="User not found",
+        )
+
+
+    # --------------------------------------------------------
+    # Validate file
+    # --------------------------------------------------------
+
+    if not file.filename:
+
+        raise HTTPException(
+            status_code=400,
+            detail="No file selected",
+        )
+
+
+    allowed_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+    }
+
+
+    original_name = file.filename
+
+    extension = os.path.splitext(
+        original_name
+    )[1].lower()
+
+
+    if extension not in allowed_extensions:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported image format. "
+                "Use JPG, JPEG, PNG or WEBP."
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Read file
+    # --------------------------------------------------------
+
+    file_contents = await file.read()
+
+
+    if not file_contents:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded file is empty",
+        )
+
+
+    # --------------------------------------------------------
+    # Create hash
+    # --------------------------------------------------------
+
+    image_hash = hashlib.sha256(
+        file_contents
+    ).hexdigest()
 
 
     # --------------------------------------------------------
     # Prevent duplicate upload
     # --------------------------------------------------------
 
-    existing = db.query(Report).filter(
-        Report.username == username,
-        Report.image_hash == image_hash
-    ).first()
+    existing = (
+        db.query(Report)
+        .filter(
+            Report.username == username,
+            Report.image_hash == image_hash,
+        )
+        .first()
+    )
+
 
     if existing:
 
-        os.remove(file_path)
-
         raise HTTPException(
             status_code=400,
-            detail="You have already uploaded this image."
+            detail=(
+                "You have already uploaded this image."
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Generate unique filename
+    # --------------------------------------------------------
+
+    safe_filename = (
+        f"{image_hash[:16]}{extension}"
+    )
+
+
+    file_path = os.path.join(
+        UPLOAD_DIR,
+        safe_filename,
+    ).replace(
+        "\\",
+        "/",
+    )
+
+
+    # --------------------------------------------------------
+    # Save uploaded image
+    # --------------------------------------------------------
+
+    try:
+
+        with open(
+            file_path,
+            "wb",
+        ) as buffer:
+
+            buffer.write(
+                file_contents
+            )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Failed to save image: {str(e)}"
+            ),
         )
 
 
@@ -632,37 +1043,55 @@ async def upload_image(
     # Prepare image for CNN
     #
     # IMPORTANT:
-    # This is intentionally the SAME preprocessing
-    # as your working predict.py
-    #
-    # NO /255.0 here.
+    # Same preprocessing as your working CNN.
+    # NO /255.0 normalization here.
     # --------------------------------------------------------
 
     try:
 
-        image = Image.open(
-            file_path
-        ).convert("RGB")
+        image = (
+            Image.open(
+                file_path
+            )
+            .convert("RGB")
+        )
+
 
         image = image.resize(
             (128, 128)
         )
 
+
         image_array = np.array(
             image,
-            dtype=np.float32
+            dtype=np.float32,
         )
+
 
         image_array = np.expand_dims(
             image_array,
-            axis=0
+            axis=0,
         )
+
 
     except Exception as e:
 
+        try:
+
+            os.remove(
+                file_path
+            )
+
+        except Exception:
+
+            pass
+
+
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid image: {str(e)}"
+            detail=(
+                f"Invalid image: {str(e)}"
+            ),
         )
 
 
@@ -670,15 +1099,40 @@ async def upload_image(
     # CNN prediction
     # --------------------------------------------------------
 
-    predictions = model.predict(
-        image_array,
-        verbose=0
-    )
+    try:
+
+        predictions = model.predict(
+            image_array,
+            verbose=0,
+        )
+
+
+    except Exception as e:
+
+        try:
+
+            os.remove(
+                file_path
+            )
+
+        except Exception:
+
+            pass
+
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"CNN prediction failed: {str(e)}"
+            ),
+        )
+
 
     print(
         "CNN raw predictions:",
-        predictions[0]
+        predictions[0],
     )
+
 
     class_index = int(
         np.argmax(
@@ -686,22 +1140,26 @@ async def upload_image(
         )
     )
 
+
     confidence = float(
         predictions[0][class_index]
     )
 
-    predicted_class = CLASS_NAMES[
-        class_index
-    ]
+
+    predicted_class = (
+        CLASS_NAMES[class_index]
+    )
+
 
     print(
         "Predicted class:",
-        predicted_class
+        predicted_class,
     )
+
 
     print(
         "Confidence:",
-        confidence
+        confidence,
     )
 
 
@@ -731,10 +1189,11 @@ async def upload_image(
             "damage_type": predicted_class,
             "confidence": round(
                 confidence,
-                4
-            )
+                4,
+            ),
         }
     ]
+
 
     primary_detection = detections[0]
 
@@ -749,13 +1208,17 @@ async def upload_image(
 
         username=username,
 
-        damage_type=primary_detection[
-            "damage_type"
-        ],
+        damage_type=(
+            primary_detection[
+                "damage_type"
+            ]
+        ),
 
-        confidence=primary_detection[
-            "confidence"
-        ],
+        confidence=(
+            primary_detection[
+                "confidence"
+            ]
+        ),
 
         points=points,
 
@@ -763,12 +1226,15 @@ async def upload_image(
 
         longitude=longitude,
 
-        timestamp=str(
-            datetime.now()
+        timestamp=(
+            datetime.now(
+                timezone.utc
+            ).isoformat()
         ),
 
-        image_hash=image_hash
+        image_hash=image_hash,
     )
+
 
     db.add(report)
 
@@ -777,20 +1243,40 @@ async def upload_image(
     # Update user score
     # --------------------------------------------------------
 
-    user = db.query(User).filter(
-        User.username == username
-    ).first()
-
-    if user:
-
-        user.total_points += points
+    user.total_points += points
 
 
     # --------------------------------------------------------
     # Commit database
     # --------------------------------------------------------
 
-    db.commit()
+    try:
+
+        db.commit()
+
+        db.refresh(report)
+
+    except Exception as e:
+
+        db.rollback()
+
+        try:
+
+            os.remove(
+                file_path
+            )
+
+        except Exception:
+
+            pass
+
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Failed to save report: {str(e)}"
+            ),
+        )
 
 
     # --------------------------------------------------------
@@ -799,13 +1285,15 @@ async def upload_image(
 
     return {
 
-        "filename": file.filename,
+        "filename": original_name,
 
         "detections": detections,
 
         "points": points,
 
-        "message": "Upload saved successfully"
+        "message": (
+            "Upload saved successfully"
+        ),
     }
 
 
@@ -816,14 +1304,19 @@ async def upload_image(
 @app.get("/myreports/{username}")
 def get_my_reports(
     username: str,
-    db=Depends(get_db)
+    db=Depends(get_db),
 ):
 
-    reports = db.query(
-        Report
-    ).filter(
-        Report.username == username
-    ).all()
+    reports = (
+        db.query(Report)
+        .filter(
+            Report.username == username
+        )
+        .order_by(
+            Report.id.desc()
+        )
+        .all()
+    )
 
     return reports
 
@@ -834,12 +1327,16 @@ def get_my_reports(
 
 @app.get("/publicreports")
 def get_public_reports(
-    db=Depends(get_db)
+    db=Depends(get_db),
 ):
 
-    reports = db.query(
-        Report
-    ).all()
+    reports = (
+        db.query(Report)
+        .order_by(
+            Report.id.desc()
+        )
+        .all()
+    )
 
     return reports
 
@@ -850,25 +1347,31 @@ def get_public_reports(
 
 @app.get("/leaderboard")
 def leaderboard(
-    db=Depends(get_db)
+    db=Depends(get_db),
 ):
 
-    users = db.query(
-        User
-    ).order_by(
-        User.total_points.desc()
-    ).limit(5).all()
+    users = (
+        db.query(User)
+        .order_by(
+            User.total_points.desc()
+        )
+        .limit(5)
+        .all()
+    )
+
 
     result = []
+
 
     for user in users:
 
         result.append(
             {
                 "username": user.username,
-                "score": user.total_points
+                "score": user.total_points,
             }
         )
+
 
     return result
 
@@ -879,12 +1382,16 @@ def leaderboard(
 
 @app.get("/reports")
 def get_reports(
-    db=Depends(get_db)
+    db=Depends(get_db),
 ):
 
-    reports = db.query(
-        Report
-    ).all()
+    reports = (
+        db.query(Report)
+        .order_by(
+            Report.id.desc()
+        )
+        .all()
+    )
 
     return reports
 
@@ -896,25 +1403,52 @@ def get_reports(
 @app.delete("/reports/{report_id}")
 def delete_report(
     report_id: int,
-    db=Depends(get_db)
+    db=Depends(get_db),
 ):
 
-    report = db.query(
-        Report
-    ).filter(
-        Report.id == report_id
-    ).first()
+    report = (
+        db.query(Report)
+        .filter(
+            Report.id == report_id
+        )
+        .first()
+    )
+
 
     if not report:
 
         raise HTTPException(
             status_code=404,
-            detail="Report not found"
+            detail="Report not found",
         )
 
 
     # --------------------------------------------------------
-    # Delete image file
+    # IMPORTANT:
+    # Remove points from the user when the report is deleted.
+    # --------------------------------------------------------
+
+    user = (
+        db.query(User)
+        .filter(
+            User.username == report.username
+        )
+        .first()
+    )
+
+
+    if user:
+
+        user.total_points = max(
+            0,
+            user.total_points - (
+                report.points or 0
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Delete image
     # --------------------------------------------------------
 
     if (
@@ -945,6 +1479,9 @@ def delete_report(
 
     db.commit()
 
+
     return {
-        "message": "Report deleted successfully"
+        "message": (
+            "Report deleted successfully"
+        )
     }
