@@ -115,7 +115,7 @@ Dataset resources and training material are maintained separately in the project
 
 🏗️ Model Architecture
 
-Instead of using a pre-trained YOLO model, the project uses a custom Convolutional Neural Network (CNN) developed and trained using TensorFlow/Keras.
+Instead of using a pre-trained  model, the project uses a custom Convolutional Neural Network (CNN) developed and trained using TensorFlow/Keras.
 
 The CNN performs image classification rather than object detection.
 
