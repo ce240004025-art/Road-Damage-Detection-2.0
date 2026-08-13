@@ -1,4 +1,3 @@
-```jsx
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -17,6 +16,7 @@ import {
   Pie,
   Cell,
   Tooltip,
+  Legend,
   ResponsiveContainer,
 } from "recharts";
 
@@ -68,9 +68,7 @@ function Dashboard() {
 
     if (path.startsWith("http")) return path;
 
-    const cleanPath = path.startsWith("/")
-      ? path.substring(1)
-      : path;
+    const cleanPath = path.startsWith("/") ? path.substring(1) : path;
 
     return `${API_URL}/${cleanPath}`;
   };
@@ -118,14 +116,13 @@ function Dashboard() {
   const formatDamageType = (type) => {
     if (!type) return "Clear Road";
 
-    const t = type.toUpperCase();
+    const t = String(type).toUpperCase();
 
     if (t === "D00") return "Longitudinal Crack";
     if (t === "D10") return "Transverse Crack";
     if (t === "D20") return "Alligator Crack";
     if (t === "D40") return "Pothole";
     if (t === "NONE") return "Clear Road";
-
     if (t === "NO_DAMAGE") return "No Damage";
     if (t === "POTHOLE") return "Pothole";
     if (t === "CRACK") return "Crack";
@@ -133,269 +130,61 @@ function Dashboard() {
     return type;
   };
 
-  // ============================================================
-  // PIE CHART DATA
-  // ============================================================
+  const calculateStats = (reportList) => {
+    const stats = {
+      crack: 0,
+      pothole: 0,
+      no_damage: 0,
+    };
 
-  const getChartData = (reportList) => {
-    const potholes = reportList.filter(
-      (report) => {
-        const type = String(report.damage_type || "")
-          .toLowerCase()
-          .trim();
+    reportList.forEach((report) => {
+      const type = String(report.damage_type || "")
+        .toLowerCase()
+        .trim();
 
-        return type === "pothole";
+      if (
+        type === "crack" ||
+        type === "d00" ||
+        type === "d10" ||
+        type === "d20"
+      ) {
+        stats.crack += 1;
+      } else if (type === "pothole" || type === "d40") {
+        stats.pothole += 1;
+      } else if (
+        type === "no_damage" ||
+        type === "none" ||
+        type === "no damage"
+      ) {
+        stats.no_damage += 1;
       }
-    ).length;
-
-    const cracks = reportList.filter(
-      (report) => {
-        const type = String(report.damage_type || "")
-          .toLowerCase()
-          .trim();
-
-        return (
-          type === "crack" ||
-          type === "d00" ||
-          type === "d10" ||
-          type === "d20"
-        );
-      }
-    ).length;
-
-    const noDamage = reportList.filter(
-      (report) => {
-        const type = String(report.damage_type || "")
-          .toLowerCase()
-          .trim();
-
-        return (
-          type === "no_damage" ||
-          type === "none" ||
-          type === "no damage"
-        );
-      }
-    ).length;
+    });
 
     return [
       {
-        name: "Potholes",
-        value: potholes,
-        color: "#ef4444",
+        name: "Pothole",
+        value: stats.pothole,
       },
       {
-        name: "Cracks",
-        value: cracks,
-        color: "#facc15",
+        name: "Crack",
+        value: stats.crack,
       },
       {
         name: "No Damage",
-        value: noDamage,
-        color: "#22c55e",
+        value: stats.no_damage,
       },
-    ];
+    ].filter((item) => item.value > 0);
   };
 
-  const publicChartData = getChartData(publicReports);
-  const personalChartData = getChartData(myReports);
+  const pieData = calculateStats(reports);
 
-  // ============================================================
-  // PIE CHART COMPONENT
-  // ============================================================
-
-  const DamagePieChart = ({ title, data }) => {
-    const total = data.reduce(
-      (sum, item) => sum + item.value,
-      0
-    );
-
-    return (
-      <div
-        className="glass-card glass-card-compact hover-lift"
-        style={{
-          marginBottom: "24px",
-          padding: "20px",
-        }}
-      >
-        <h3
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            marginBottom: "10px",
-            fontSize: "18px",
-          }}
-        >
-          <Activity
-            size={20}
-            color="var(--accent-primary)"
-          />
-          {title}
-        </h3>
-
-        {total === 0 ? (
-          <div
-            style={{
-              height: "220px",
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "center",
-              alignItems: "center",
-              color: "var(--text-secondary)",
-            }}
-          >
-            <ImageIcon
-              size={42}
-              style={{ opacity: 0.5 }}
-            />
-            <p>No uploads yet</p>
-          </div>
-        ) : (
-          <>
-            <div
-              style={{
-                width: "100%",
-                height: "220px",
-                position: "relative",
-              }}
-            >
-              <ResponsiveContainer
-                width="100%"
-                height="100%"
-              >
-                <PieChart>
-                  <Pie
-                    data={data}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={78}
-                    innerRadius={0}
-                    paddingAngle={1}
-                    stroke="rgba(255,255,255,0.15)"
-                    strokeWidth={2}
-                  >
-                    {data.map((entry, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={entry.color}
-                      />
-                    ))}
-                  </Pie>
-
-                  <Tooltip
-                    formatter={(value, name) => [
-                      `${value}`,
-                      name,
-                    ]}
-                    contentStyle={{
-                      background:
-                        "rgba(20, 20, 25, 0.95)",
-                      border:
-                        "1px solid rgba(255,255,255,0.15)",
-                      borderRadius: "10px",
-                      color: "#fff",
-                    }}
-                    labelStyle={{
-                      color: "#fff",
-                    }}
-                    itemStyle={{
-                      color: "#fff",
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-
-              {/* CENTER TOTAL */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: "50%",
-                  left: "50%",
-                  transform:
-                    "translate(-50%, -50%)",
-                  textAlign: "center",
-                  pointerEvents: "none",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: "28px",
-                    fontWeight: "800",
-                    color: "white",
-                  }}
-                >
-                  {total}
-                </div>
-
-                <div
-                  style={{
-                    fontSize: "11px",
-                    color:
-                      "var(--text-secondary)",
-                  }}
-                >
-                  Total
-                </div>
-              </div>
-            </div>
-
-            {/* LEGEND WITH COUNTS */}
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                gap: "14px",
-                flexWrap: "wrap",
-                marginTop: "4px",
-              }}
-            >
-              {data.map((item) => (
-                <div
-                  key={item.name}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    fontSize: "12px",
-                    color:
-                      "var(--text-secondary)",
-                  }}
-                >
-                  <span
-                    style={{
-                      width: "10px",
-                      height: "10px",
-                      borderRadius: "50%",
-                      background: item.color,
-                      display: "inline-block",
-                    }}
-                  />
-
-                  <span>
-                    {item.name}:{" "}
-                    <strong
-                      style={{ color: "white" }}
-                    >
-                      {item.value}
-                    </strong>
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    );
-  };
+  const COLORS = ["#ef4444", "#eab308", "#22c55e"];
 
   return (
     <>
       <div className="app-background"></div>
 
       <div className="page-container animate-fade-in">
-
         {/* Navigation Bar */}
         <div
           className="glass-card"
@@ -476,11 +265,9 @@ function Dashboard() {
             gap: "32px",
           }}
         >
-
-          {/* LEFT SIDEBAR */}
+          {/* Left Sidebar */}
           <div className="animate-fade-up delay-100">
-
-            {/* TOTAL SCORE */}
+            {/* Total Score */}
             <div
               className="glass-card glass-card-compact hover-lift"
               style={{ marginBottom: "24px" }}
@@ -520,7 +307,7 @@ function Dashboard() {
               </div>
             </div>
 
-            {/* LEADERBOARD */}
+            {/* Leaderboard */}
             <div
               className="glass-card glass-card-compact hover-lift"
               style={{ marginBottom: "24px" }}
@@ -548,96 +335,148 @@ function Dashboard() {
                   margin: 0,
                 }}
               >
-                {leaderboard
-                  .slice(0, 5)
-                  .map((user, index) => (
-                    <li
-                      key={index}
+                {leaderboard.slice(0, 5).map((user, index) => (
+                  <li
+                    key={index}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "12px",
+                      background: "rgba(255,255,255,0.02)",
+                      borderRadius: "12px",
+                      marginBottom: "8px",
+                      border: "1px solid var(--glass-border)",
+                    }}
+                  >
+                    <div
                       style={{
-                        display: "flex",
-                        alignItems: "center",
-                        padding: "12px",
-                        background:
-                          "rgba(255,255,255,0.02)",
-                        borderRadius: "12px",
-                        marginBottom: "8px",
-                        border:
-                          "1px solid var(--glass-border)",
+                        fontSize: "20px",
+                        width: "32px",
+                        textAlign: "center",
+                        marginRight: "12px",
                       }}
                     >
-                      <div
-                        style={{
-                          fontSize: "20px",
-                          width: "32px",
-                          textAlign: "center",
-                          marginRight: "12px",
-                        }}
-                      >
-                        {index === 0
-                          ? "🥇"
-                          : index === 1
-                          ? "🥈"
-                          : index === 2
-                          ? "🥉"
-                          : (
-                            <span
-                              style={{
-                                fontSize: "14px",
-                                color:
-                                  "var(--text-secondary)",
-                              }}
-                            >
-                              #{index + 1}
-                            </span>
-                          )}
-                      </div>
+                      {index === 0 ? (
+                        "🥇"
+                      ) : index === 1 ? (
+                        "🥈"
+                      ) : index === 2 ? (
+                        "🥉"
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: "14px",
+                            color: "var(--text-secondary)",
+                          }}
+                        >
+                          #{index + 1}
+                        </span>
+                      )}
+                    </div>
 
-                      <div
-                        style={{
-                          flexGrow: 1,
-                          fontWeight: "500",
-                        }}
-                      >
-                        {user.username}
-                      </div>
+                    <div
+                      style={{
+                        flexGrow: 1,
+                        fontWeight: "500",
+                      }}
+                    >
+                      {user.username}
+                    </div>
 
-                      <div
-                        style={{
-                          fontWeight: "600",
-                          color:
-                            "var(--accent-primary)",
-                        }}
-                      >
-                        {user.score}
-                      </div>
-                    </li>
-                  ))}
+                    <div
+                      style={{
+                        fontWeight: "600",
+                        color: "var(--accent-primary)",
+                      }}
+                    >
+                      {user.score}
+                    </div>
+                  </li>
+                ))}
               </ul>
             </div>
 
-            {/* ==================================================
-                TWO PIE CHARTS BELOW LEADERBOARD
-               ================================================== */}
+            {/* Statistics */}
+            {pieData.length > 0 && (
+              <div
+                className="glass-card glass-card-compact hover-lift"
+                style={{ marginBottom: "24px" }}
+              >
+                <h3
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    marginBottom: "16px",
+                    fontSize: "18px",
+                  }}
+                >
+                  <Activity
+                    size={20}
+                    color="var(--accent-primary)"
+                  />
 
-            <DamagePieChart
-              title="Public Uploads"
-              data={publicChartData}
-            />
+                  {view === "my"
+                    ? "Upload Statistics"
+                    : "Global Statistics"}
+                </h3>
 
-            <DamagePieChart
-              title="Personal Uploads"
-              data={personalChartData}
-            />
+                <div
+                  style={{
+                    width: "100%",
+                    height: "220px",
+                  }}
+                >
+                  <ResponsiveContainer
+                    width="100%"
+                    height="100%"
+                  >
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        cx="50%"
+                        cy="45%"
+                        outerRadius={75}
+                        dataKey="value"
+                      >
+                        {pieData.map((entry, index) => (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={COLORS[index % COLORS.length]}
+                          />
+                        ))}
+                      </Pie>
 
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "rgba(0,0,0,0.8)",
+                          border:
+                            "1px solid var(--glass-border)",
+                          borderRadius: "8px",
+                        }}
+                        itemStyle={{
+                          color: "#fff",
+                        }}
+                      />
+
+                      <Legend
+                        wrapperStyle={{
+                          paddingTop: "16px",
+                        }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* RIGHT CONTENT */}
+          {/* Right Content */}
           <div className="animate-fade-up delay-200">
             <div
               className="glass-card"
               style={{ padding: "24px" }}
             >
-
               <div
                 style={{
                   display: "flex",
@@ -650,8 +489,7 @@ function Dashboard() {
                   style={{
                     display: "flex",
                     gap: "12px",
-                    background:
-                      "rgba(0,0,0,0.3)",
+                    background: "rgba(0,0,0,0.3)",
                     padding: "6px",
                     borderRadius: "16px",
                     border:
@@ -685,9 +523,7 @@ function Dashboard() {
                       border: "none",
                       borderRadius: "12px",
                     }}
-                    onClick={() =>
-                      setView("public")
-                    }
+                    onClick={() => setView("public")}
                   >
                     Public Gallery
                   </button>
@@ -706,8 +542,7 @@ function Dashboard() {
                   style={{
                     textAlign: "center",
                     padding: "60px",
-                    color:
-                      "var(--text-secondary)",
+                    color: "var(--text-secondary)",
                   }}
                 >
                   <RefreshCw
@@ -752,8 +587,7 @@ function Dashboard() {
 
                   <p
                     style={{
-                      color:
-                        "var(--text-secondary)",
+                      color: "var(--text-secondary)",
                       marginBottom: "24px",
                     }}
                   >
@@ -783,9 +617,7 @@ function Dashboard() {
                       }`}
                     >
                       <img
-                        src={getImageUrl(
-                          r.image_path
-                        )}
+                        src={getImageUrl(r.image_path)}
                         alt={r.damage_type}
                         className="report-image"
                         style={{
@@ -793,14 +625,11 @@ function Dashboard() {
                         }}
                         onClick={() =>
                           setSelectedImage(
-                            getImageUrl(
-                              r.image_path
-                            )
+                            getImageUrl(r.image_path)
                           )
                         }
                         onError={(e) => {
-                          e.target.style.display =
-                            "none";
+                          e.target.style.display = "none";
                         }}
                       />
 
@@ -814,8 +643,7 @@ function Dashboard() {
                             display: "flex",
                             justifyContent:
                               "space-between",
-                            alignItems:
-                              "flex-start",
+                            alignItems: "flex-start",
                             marginBottom: "8px",
                           }}
                         >
@@ -823,8 +651,7 @@ function Dashboard() {
                             style={{
                               fontSize: "18px",
                               fontWeight: "600",
-                              textTransform:
-                                "capitalize",
+                              textTransform: "capitalize",
                             }}
                           >
                             {formatDamageType(
@@ -835,13 +662,10 @@ function Dashboard() {
                           {view === "my" && (
                             <button
                               onClick={() =>
-                                handleDeleteReport(
-                                  r.id
-                                )
+                                handleDeleteReport(r.id)
                               }
                               style={{
-                                background:
-                                  "transparent",
+                                background: "transparent",
                                 border: "none",
                                 color:
                                   "var(--text-secondary)",
@@ -880,11 +704,8 @@ function Dashboard() {
                           >
                             {r.confidence
                               ? `${(
-                                  r.confidence *
-                                  100
-                                ).toFixed(
-                                  0
-                                )}% Match`
+                                  r.confidence * 100
+                                ).toFixed(0)}% Match`
                               : "N/A"}
                           </span>
                         </div>
@@ -908,8 +729,7 @@ function Dashboard() {
                         <span
                           style={{
                             display: "flex",
-                            alignItems:
-                              "center",
+                            alignItems: "center",
                             gap: "4px",
                             color:
                               "var(--text-secondary)",
@@ -921,34 +741,24 @@ function Dashboard() {
                             <>
                               {`${parseFloat(
                                 r.latitude
-                              ).toFixed(
-                                3
-                              )}, ${parseFloat(
+                              ).toFixed(3)}, ${parseFloat(
                                 r.longitude
-                              ).toFixed(
-                                3
-                              )}`}
+                              ).toFixed(3)}`}
 
                               <a
                                 href={`https://www.google.com/maps?q=${r.latitude},${r.longitude}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 style={{
-                                  marginLeft:
-                                    "6px",
-                                  padding:
-                                    "2px 6px",
+                                  marginLeft: "6px",
+                                  padding: "2px 6px",
                                   background:
                                     "var(--accent-primary)",
                                   color: "#fff",
-                                  borderRadius:
-                                    "4px",
-                                  textDecoration:
-                                    "none",
-                                  fontSize:
-                                    "12px",
-                                  fontWeight:
-                                    "500",
+                                  borderRadius: "4px",
+                                  textDecoration: "none",
+                                  fontSize: "12px",
+                                  fontWeight: "500",
                                 }}
                               >
                                 View
@@ -980,7 +790,7 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* FULLSCREEN IMAGE MODAL */}
+      {/* Fullscreen Image Modal */}
       {selectedImage && (
         <div
           style={{
@@ -989,8 +799,7 @@ function Dashboard() {
             left: 0,
             width: "100vw",
             height: "100vh",
-            background:
-              "rgba(0, 0, 0, 0.85)",
+            background: "rgba(0, 0, 0, 0.85)",
             backdropFilter: "blur(10px)",
             zIndex: 9999,
             display: "flex",
@@ -998,9 +807,7 @@ function Dashboard() {
             alignItems: "center",
             padding: "40px",
           }}
-          onClick={() =>
-            setSelectedImage(null)
-          }
+          onClick={() => setSelectedImage(null)}
         >
           <img
             src={selectedImage}
@@ -1020,8 +827,7 @@ function Dashboard() {
               position: "absolute",
               top: "24px",
               right: "24px",
-              background:
-                "rgba(255, 255, 255, 0.1)",
+              background: "rgba(255, 255, 255, 0.1)",
               border:
                 "1px solid rgba(255, 255, 255, 0.2)",
               color: "white",
@@ -1034,9 +840,7 @@ function Dashboard() {
               alignItems: "center",
               justifyContent: "center",
             }}
-            onClick={() =>
-              setSelectedImage(null)
-            }
+            onClick={() => setSelectedImage(null)}
           >
             ×
           </button>
@@ -1047,4 +851,3 @@ function Dashboard() {
 }
 
 export default Dashboard;
-```
