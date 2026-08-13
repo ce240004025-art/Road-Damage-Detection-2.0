@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-tensorflow
+tensorflow==2.20.0
 pillow
 numpy
 sqlalchemy
@@ -10,5 +10,4 @@ python-jose[cryptography]
 python-multipart
 google-auth
 python-dotenv
-psycopg2-binary
 psycopg2-binary
