@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LogOut, Plus, RefreshCw, Trophy, ImageIcon, MapPin, Award, Activity, Trash2 } from "lucide-react";
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 function Dashboard() {
   const [myReports, setMyReports] = useState([]);
@@ -16,7 +17,7 @@ function Dashboard() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const API_URL = process.env.REACT_APP_API_URL || "https://road-damage-detection-2-0.onrender.com";
+      const API_URL = process.env.REACT_APP_API_URL || "https://road-damage-detection-qcns.onrender.com";
       const myRes = await fetch(`${API_URL}/myreports/${username}`);
       const myData = await myRes.json();
 
@@ -43,7 +44,7 @@ function Dashboard() {
 
   const getImageUrl = (path) => {
     if (!path) return "";
-    const API_URL = process.env.REACT_APP_API_URL || "https://road-damage-detection-2-0.onrender.com";
+    const API_URL = process.env.REACT_APP_API_URL || "https://road-damage-detection-qcns.onrender.com";
     if (path.startsWith("http")) return path;
     const cleanPath = path.startsWith("/") ? path.substring(1) : path;
     return `${API_URL}/${cleanPath}`;
@@ -58,7 +59,7 @@ function Dashboard() {
   const handleDeleteReport = async (reportId) => {
     if (!window.confirm("Are you sure you want to delete this record?")) return;
     try {
-      const API_URL = process.env.REACT_APP_API_URL || "https://road-damage-detection-2-0.onrender.com";
+      const API_URL = process.env.REACT_APP_API_URL || "https://road-damage-detection-qcns.onrender.com";
       const res = await fetch(`${API_URL}/reports/${reportId}`, {
         method: "DELETE"
       });
@@ -92,6 +93,24 @@ function Dashboard() {
     if (t === "NONE") return "Clear Road";
     return type;
   };
+
+  const calculateStats = (reports) => {
+    const stats = { crack: 0, pothole: 0, no_damage: 0 };
+    reports.forEach(r => {
+      if (r.damage_type === "crack") stats.crack += 1;
+      else if (r.damage_type === "pothole") stats.pothole += 1;
+      else if (r.damage_type === "no_damage") stats.no_damage += 1;
+    });
+    
+    return [
+      { name: "Pothole", value: stats.pothole },
+      { name: "Crack", value: stats.crack },
+      { name: "No Damage", value: stats.no_damage }
+    ].filter(item => item.value > 0);
+  };
+
+  const pieData = calculateStats(reports);
+  const COLORS = ['#ef4444', '#eab308', '#22c55e']; // Red, Yellow, Green
 
   return (
     <>
@@ -130,7 +149,7 @@ function Dashboard() {
               </div>
             </div>
 
-            <div className="glass-card glass-card-compact hover-lift">
+            <div className="glass-card glass-card-compact hover-lift" style={{ marginBottom: '24px' }}>
               <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px', fontSize: '18px' }}>
                 <Trophy size={20} color="var(--warning)" /> Top Contributors
               </h3>
@@ -147,6 +166,36 @@ function Dashboard() {
                 ))}
               </ul>
             </div>
+
+            {pieData.length > 0 && (
+              <div className="glass-card glass-card-compact hover-lift" style={{ marginBottom: '24px' }}>
+                <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', fontSize: '18px' }}>
+                  <Activity size={20} color="var(--accent-primary)" /> {view === "my" ? "Upload Statistics" : "Global Statistics"}
+                </h3>
+                <div style={{ width: '100%', height: '220px' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        cx="50%"
+                        cy="45%"
+                        outerRadius={75}
+                        dataKey="value"
+                      >
+                        {pieData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: 'rgba(0,0,0,0.8)', border: '1px solid var(--glass-border)', borderRadius: '8px' }}
+                        itemStyle={{ color: '#fff' }}
+                      />
+                      <Legend wrapperStyle={{ paddingTop: '16px' }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right Content */}
