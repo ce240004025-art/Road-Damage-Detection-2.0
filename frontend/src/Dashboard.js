@@ -31,6 +31,8 @@ function Dashboard() {
   const navigate = useNavigate();
   const username = localStorage.getItem("username");
 
+  // IMPORTANT:
+  // This must be your currently deployed FastAPI backend.
   const API_URL =
     process.env.REACT_APP_API_URL ||
     "https://road-damage-detection-qcns.onrender.com";
@@ -39,13 +41,34 @@ function Dashboard() {
     try {
       setLoading(true);
 
-      const myRes = await fetch(`${API_URL}/myreports/${username}`);
+      const myRes = await fetch(
+        `${API_URL}/myreports/${encodeURIComponent(username || "")}`
+      );
+
+      if (!myRes.ok) {
+        throw new Error(`My reports request failed: ${myRes.status}`);
+      }
+
       const myData = await myRes.json();
 
       const publicRes = await fetch(`${API_URL}/publicreports`);
+
+      if (!publicRes.ok) {
+        throw new Error(
+          `Public reports request failed: ${publicRes.status}`
+        );
+      }
+
       const publicData = await publicRes.json();
 
       const leaderRes = await fetch(`${API_URL}/leaderboard`);
+
+      if (!leaderRes.ok) {
+        throw new Error(
+          `Leaderboard request failed: ${leaderRes.status}`
+        );
+      }
+
       const leaderData = await leaderRes.json();
 
       setMyReports(Array.isArray(myData) ? myData : []);
@@ -53,6 +76,10 @@ function Dashboard() {
       setLeaderboard(Array.isArray(leaderData) ? leaderData : []);
     } catch (error) {
       console.error("Dashboard fetch error:", error);
+
+      setMyReports([]);
+      setPublicReports([]);
+      setLeaderboard([]);
     } finally {
       setLoading(false);
     }
@@ -60,13 +87,17 @@ function Dashboard() {
 
   useEffect(() => {
     fetchData();
+
+    // We intentionally only want this to run once when Dashboard loads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const getImageUrl = (path) => {
     if (!path) return "";
 
-    if (path.startsWith("http")) return path;
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+      return path;
+    }
 
     const cleanPath = path.startsWith("/") ? path.substring(1) : path;
 
@@ -80,9 +111,11 @@ function Dashboard() {
   };
 
   const handleDeleteReport = async (reportId) => {
-    if (!window.confirm("Are you sure you want to delete this record?")) {
-      return;
-    }
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this record?"
+    );
+
+    if (!confirmed) return;
 
     try {
       const res = await fetch(`${API_URL}/reports/${reportId}`, {
@@ -90,102 +123,116 @@ function Dashboard() {
       });
 
       if (res.ok) {
-        fetchData();
+        await fetchData();
       } else {
         alert("Failed to delete report.");
       }
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error("Delete error:", error);
       alert("Error deleting report.");
     }
   };
 
   const totalScore = myReports.reduce(
-    (total, report) => total + (report.points || 0),
+    (total, report) => total + Number(report.points || 0),
     0
   );
 
   const reports = view === "my" ? myReports : publicReports;
 
-  const getConfidenceClass = (conf) => {
+  const getConfidenceClass = (confidence) => {
+    const conf = Number(confidence || 0);
+
     if (conf > 0.7) return "badge-success";
     if (conf > 0.4) return "badge-warning";
+
     return "badge-danger";
   };
 
   const formatDamageType = (type) => {
     if (!type) return "Clear Road";
 
-    const t = String(type).toUpperCase();
+    const value = String(type).trim().toUpperCase();
 
-    if (t === "D00") return "Longitudinal Crack";
-    if (t === "D10") return "Transverse Crack";
-    if (t === "D20") return "Alligator Crack";
-    if (t === "D40") return "Pothole";
-    if (t === "NONE") return "Clear Road";
-    if (t === "NO_DAMAGE") return "No Damage";
-    if (t === "POTHOLE") return "Pothole";
-    if (t === "CRACK") return "Crack";
+    if (value === "D00") return "Longitudinal Crack";
+    if (value === "D10") return "Transverse Crack";
+    if (value === "D20") return "Alligator Crack";
+    if (value === "D40") return "Pothole";
+
+    if (value === "POTHOLE") return "Pothole";
+    if (value === "CRACK") return "Crack";
+
+    if (value === "NONE") return "Clear Road";
+    if (value === "NO_DAMAGE") return "No Damage";
+    if (value === "NO DAMAGE") return "No Damage";
 
     return type;
   };
 
+  // ============================================================
+  // PIE CHART DATA
+  // ============================================================
+
   const calculateStats = (reportList) => {
-    const stats = {
-      crack: 0,
-      pothole: 0,
-      no_damage: 0,
-    };
+    let pothole = 0;
+    let crack = 0;
+    let noDamage = 0;
 
     reportList.forEach((report) => {
       const type = String(report.damage_type || "")
-        .toLowerCase()
-        .trim();
+        .trim()
+        .toLowerCase();
 
-      if (
+      if (type === "pothole" || type === "d40") {
+        pothole++;
+      } else if (
         type === "crack" ||
         type === "d00" ||
         type === "d10" ||
         type === "d20"
       ) {
-        stats.crack += 1;
-      } else if (type === "pothole" || type === "d40") {
-        stats.pothole += 1;
+        crack++;
       } else if (
         type === "no_damage" ||
+        type === "no damage" ||
         type === "none" ||
-        type === "no damage"
+        type === "clear road"
       ) {
-        stats.no_damage += 1;
+        noDamage++;
       }
     });
 
     return [
       {
         name: "Pothole",
-        value: stats.pothole,
+        value: pothole,
+        color: "#ef4444",
       },
       {
         name: "Crack",
-        value: stats.crack,
+        value: crack,
+        color: "#eab308",
       },
       {
         name: "No Damage",
-        value: stats.no_damage,
+        value: noDamage,
+        color: "#22c55e",
       },
     ].filter((item) => item.value > 0);
   };
 
   const pieData = calculateStats(reports);
 
-  const COLORS = ["#ef4444", "#eab308", "#22c55e"];
+  // ============================================================
+  // RENDER
+  // ============================================================
 
   return (
     <>
       <div className="app-background"></div>
 
       <div className="page-container animate-fade-in">
-        {/* Navigation Bar */}
+        {/* NAVIGATION BAR */}
         <div
           className="glass-card"
           style={{
@@ -245,7 +292,8 @@ function Dashboard() {
               className="btn btn-primary"
               onClick={() => navigate("/upload")}
             >
-              <Plus size={18} /> New Scan
+              <Plus size={18} />
+              New Scan
             </button>
 
             <button
@@ -258,6 +306,7 @@ function Dashboard() {
           </div>
         </div>
 
+        {/* MAIN GRID */}
         <div
           style={{
             display: "grid",
@@ -265,9 +314,12 @@ function Dashboard() {
             gap: "32px",
           }}
         >
-          {/* Left Sidebar */}
+          {/* ====================================================
+              LEFT SIDEBAR
+          ==================================================== */}
+
           <div className="animate-fade-up delay-100">
-            {/* Total Score */}
+            {/* TOTAL SCORE */}
             <div
               className="glass-card glass-card-compact hover-lift"
               style={{ marginBottom: "24px" }}
@@ -284,7 +336,8 @@ function Dashboard() {
                   letterSpacing: "1px",
                 }}
               >
-                <Award size={16} /> My Total Score
+                <Award size={16} />
+                My Total Score
               </h3>
 
               <div
@@ -294,7 +347,8 @@ function Dashboard() {
                   color: "var(--accent-primary)",
                 }}
               >
-                {totalScore}{" "}
+                {totalScore}
+
                 <span
                   style={{
                     fontSize: "18px",
@@ -302,12 +356,13 @@ function Dashboard() {
                     fontWeight: "500",
                   }}
                 >
+                  {" "}
                   pts
                 </span>
               </div>
             </div>
 
-            {/* Leaderboard */}
+            {/* LEADERBOARD */}
             <div
               className="glass-card glass-card-compact hover-lift"
               style={{ marginBottom: "24px" }}
@@ -335,68 +390,74 @@ function Dashboard() {
                   margin: 0,
                 }}
               >
-                {leaderboard.slice(0, 5).map((user, index) => (
-                  <li
-                    key={index}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "12px",
-                      background: "rgba(255,255,255,0.02)",
-                      borderRadius: "12px",
-                      marginBottom: "8px",
-                      border: "1px solid var(--glass-border)",
-                    }}
-                  >
-                    <div
+                {leaderboard
+                  .slice(0, 5)
+                  .map((user, index) => (
+                    <li
+                      key={index}
                       style={{
-                        fontSize: "20px",
-                        width: "32px",
-                        textAlign: "center",
-                        marginRight: "12px",
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "12px",
+                        background:
+                          "rgba(255,255,255,0.02)",
+                        borderRadius: "12px",
+                        marginBottom: "8px",
+                        border:
+                          "1px solid var(--glass-border)",
                       }}
                     >
-                      {index === 0 ? (
-                        "🥇"
-                      ) : index === 1 ? (
-                        "🥈"
-                      ) : index === 2 ? (
-                        "🥉"
-                      ) : (
-                        <span
-                          style={{
-                            fontSize: "14px",
-                            color: "var(--text-secondary)",
-                          }}
-                        >
-                          #{index + 1}
-                        </span>
-                      )}
-                    </div>
+                      <div
+                        style={{
+                          fontSize: "20px",
+                          width: "32px",
+                          textAlign: "center",
+                          marginRight: "12px",
+                        }}
+                      >
+                        {index === 0 ? (
+                          "🥇"
+                        ) : index === 1 ? (
+                          "🥈"
+                        ) : index === 2 ? (
+                          "🥉"
+                        ) : (
+                          <span
+                            style={{
+                              fontSize: "14px",
+                              color:
+                                "var(--text-secondary)",
+                            }}
+                          >
+                            #{index + 1}
+                          </span>
+                        )}
+                      </div>
 
-                    <div
-                      style={{
-                        flexGrow: 1,
-                        fontWeight: "500",
-                      }}
-                    >
-                      {user.username}
-                    </div>
+                      <div
+                        style={{
+                          flexGrow: 1,
+                          fontWeight: "500",
+                        }}
+                      >
+                        {user.username}
+                      </div>
 
-                    <div
-                      style={{
-                        fontWeight: "600",
-                        color: "var(--accent-primary)",
-                      }}
-                    >
-                      {user.score}
-                    </div>
-                  </li>
-                ))}
+                      <div
+                        style={{
+                          fontWeight: "600",
+                          color:
+                            "var(--accent-primary)",
+                        }}
+                      >
+                        {user.score}
+                      </div>
+                    </li>
+                  ))}
               </ul>
             </div>
 
-            {/* Statistics */}
+            {/* PIE CHART */}
             {pieData.length > 0 && (
               <div
                 className="glass-card glass-card-compact hover-lift"
@@ -424,7 +485,7 @@ function Dashboard() {
                 <div
                   style={{
                     width: "100%",
-                    height: "220px",
+                    height: "250px",
                   }}
                 >
                   <ResponsiveContainer
@@ -435,21 +496,25 @@ function Dashboard() {
                       <Pie
                         data={pieData}
                         cx="50%"
-                        cy="45%"
+                        cy="42%"
                         outerRadius={75}
                         dataKey="value"
+                        nameKey="name"
                       >
-                        {pieData.map((entry, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={COLORS[index % COLORS.length]}
-                          />
-                        ))}
+                        {pieData.map(
+                          (entry, index) => (
+                            <Cell
+                              key={`cell-${index}`}
+                              fill={entry.color}
+                            />
+                          )
+                        )}
                       </Pie>
 
                       <Tooltip
                         contentStyle={{
-                          backgroundColor: "rgba(0,0,0,0.8)",
+                          backgroundColor:
+                            "rgba(0,0,0,0.9)",
                           border:
                             "1px solid var(--glass-border)",
                           borderRadius: "8px",
@@ -471,16 +536,21 @@ function Dashboard() {
             )}
           </div>
 
-          {/* Right Content */}
+          {/* ====================================================
+              RIGHT CONTENT
+          ==================================================== */}
+
           <div className="animate-fade-up delay-200">
             <div
               className="glass-card"
               style={{ padding: "24px" }}
             >
+              {/* TABS + REFRESH */}
               <div
                 style={{
                   display: "flex",
-                  justifyContent: "space-between",
+                  justifyContent:
+                    "space-between",
                   alignItems: "center",
                   marginBottom: "32px",
                 }}
@@ -489,7 +559,8 @@ function Dashboard() {
                   style={{
                     display: "flex",
                     gap: "12px",
-                    background: "rgba(0,0,0,0.3)",
+                    background:
+                      "rgba(0,0,0,0.3)",
                     padding: "6px",
                     borderRadius: "16px",
                     border:
@@ -523,7 +594,9 @@ function Dashboard() {
                       border: "none",
                       borderRadius: "12px",
                     }}
-                    onClick={() => setView("public")}
+                    onClick={() =>
+                      setView("public")
+                    }
                   >
                     Public Gallery
                   </button>
@@ -533,16 +606,19 @@ function Dashboard() {
                   className="btn btn-secondary"
                   onClick={fetchData}
                 >
-                  <RefreshCw size={16} /> Refresh
+                  <RefreshCw size={16} />
+                  Refresh
                 </button>
               </div>
 
+              {/* LOADING */}
               {loading ? (
                 <div
                   style={{
                     textAlign: "center",
                     padding: "60px",
-                    color: "var(--text-secondary)",
+                    color:
+                      "var(--text-secondary)",
                   }}
                 >
                   <RefreshCw
@@ -550,13 +626,17 @@ function Dashboard() {
                     size={32}
                     style={{
                       margin: "0 auto",
-                      background: "transparent",
+                      background:
+                        "transparent",
                     }}
                   />
 
-                  <p>Syncing database...</p>
+                  <p>
+                    Syncing database...
+                  </p>
                 </div>
               ) : reports.length === 0 ? (
+                /* NO REPORTS */
                 <div
                   style={{
                     textAlign: "center",
@@ -587,7 +667,8 @@ function Dashboard() {
 
                   <p
                     style={{
-                      color: "var(--text-secondary)",
+                      color:
+                        "var(--text-secondary)",
                       marginBottom: "24px",
                     }}
                   >
@@ -608,181 +689,251 @@ function Dashboard() {
                   )}
                 </div>
               ) : (
+                /* REPORT CARDS */
                 <div className="masonry-grid">
-                  {reports.map((r, i) => (
-                    <div
-                      key={r.id}
-                      className={`glass-card glass-card-compact hover-lift animate-fade-up delay-${
-                        ((i % 3) + 1) * 100
-                      }`}
-                    >
-                      <img
-                        src={getImageUrl(r.image_path)}
-                        alt={r.damage_type}
-                        className="report-image"
-                        style={{
-                          cursor: "pointer",
-                        }}
-                        onClick={() =>
-                          setSelectedImage(
-                            getImageUrl(r.image_path)
-                          )
-                        }
-                        onError={(e) => {
-                          e.target.style.display = "none";
-                        }}
-                      />
+                  {reports.map((report, index) => {
+                    const imageUrl = getImageUrl(
+                      report.image_path
+                    );
 
+                    return (
                       <div
-                        style={{
-                          marginBottom: "16px",
-                        }}
+                        key={
+                          report.id || index
+                        }
+                        className={`glass-card glass-card-compact hover-lift animate-fade-up delay-${
+                          ((index % 3) + 1) *
+                          100
+                        }`}
                       >
+                        {/* IMAGE */}
+                        {imageUrl && (
+                          <img
+                            src={imageUrl}
+                            alt={
+                              report.damage_type ||
+                              "Road report"
+                            }
+                            className="report-image"
+                            style={{
+                              cursor:
+                                "pointer",
+                            }}
+                            onClick={() =>
+                              setSelectedImage(
+                                imageUrl
+                              )
+                            }
+                            onError={(event) => {
+                              console.error(
+                                "Image failed to load:",
+                                imageUrl
+                              );
+
+                              event.currentTarget.style.display =
+                                "none";
+                            }}
+                          />
+                        )}
+
+                        {/* REPORT INFORMATION */}
                         <div
                           style={{
-                            display: "flex",
-                            justifyContent:
-                              "space-between",
-                            alignItems: "flex-start",
-                            marginBottom: "8px",
+                            marginBottom:
+                              "16px",
                           }}
                         >
                           <div
                             style={{
-                              fontSize: "18px",
-                              fontWeight: "600",
-                              textTransform: "capitalize",
+                              display: "flex",
+                              justifyContent:
+                                "space-between",
+                              alignItems:
+                                "flex-start",
+                              marginBottom:
+                                "8px",
                             }}
                           >
-                            {formatDamageType(
-                              r.damage_type
+                            <div
+                              style={{
+                                fontSize:
+                                  "18px",
+                                fontWeight:
+                                  "600",
+                                textTransform:
+                                  "capitalize",
+                              }}
+                            >
+                              {formatDamageType(
+                                report.damage_type
+                              )}
+                            </div>
+
+                            {view === "my" && (
+                              <button
+                                onClick={() =>
+                                  handleDeleteReport(
+                                    report.id
+                                  )
+                                }
+                                style={{
+                                  background:
+                                    "transparent",
+                                  border:
+                                    "none",
+                                  color:
+                                    "var(--text-secondary)",
+                                  cursor:
+                                    "pointer",
+                                  padding:
+                                    "4px",
+                                }}
+                                title="Delete Record"
+                              >
+                                <Trash2
+                                  size={16}
+                                />
+                              </button>
                             )}
                           </div>
 
-                          {view === "my" && (
-                            <button
-                              onClick={() =>
-                                handleDeleteReport(r.id)
-                              }
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent:
+                                "space-between",
+                              alignItems:
+                                "center",
+                            }}
+                          >
+                            <span
                               style={{
-                                background: "transparent",
-                                border: "none",
                                 color:
                                   "var(--text-secondary)",
-                                cursor: "pointer",
-                                padding: "4px",
+                                fontSize:
+                                  "14px",
                               }}
-                              title="Delete Record"
                             >
-                              <Trash2 size={16} />
-                            </button>
-                          )}
+                              by @
+                              {
+                                report.username
+                              }
+                            </span>
+
+                            <span
+                              className={`badge ${getConfidenceClass(
+                                report.confidence
+                              )}`}
+                            >
+                              {report.confidence
+                                ? `${(
+                                    Number(
+                                      report.confidence
+                                    ) *
+                                    100
+                                  ).toFixed(
+                                    0
+                                  )}% Match`
+                                : "N/A"}
+                            </span>
+                          </div>
                         </div>
 
+                        <hr
+                          style={{
+                            margin: "12px 0",
+                          }}
+                        />
+
+                        {/* LOCATION + POINTS */}
                         <div
                           style={{
                             display: "flex",
                             justifyContent:
                               "space-between",
-                            alignItems: "center",
+                            alignItems:
+                              "center",
+                            fontSize: "14px",
                           }}
                         >
                           <span
                             style={{
+                              display: "flex",
+                              alignItems:
+                                "center",
+                              gap: "4px",
                               color:
                                 "var(--text-secondary)",
-                              fontSize: "14px",
                             }}
                           >
-                            by @{r.username}
+                            <MapPin
+                              size={14}
+                            />
+
+                            {report.latitude &&
+                            report.longitude ? (
+                              <>
+                                {`${parseFloat(
+                                  report.latitude
+                                ).toFixed(
+                                  3
+                                )}, ${parseFloat(
+                                  report.longitude
+                                ).toFixed(
+                                  3
+                                )}`}
+
+                                <a
+                                  href={`https://www.google.com/maps?q=${report.latitude},${report.longitude}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    marginLeft:
+                                      "6px",
+                                    padding:
+                                      "2px 6px",
+                                    background:
+                                      "var(--accent-primary)",
+                                    color:
+                                      "#fff",
+                                    borderRadius:
+                                      "4px",
+                                    textDecoration:
+                                      "none",
+                                    fontSize:
+                                      "12px",
+                                    fontWeight:
+                                      "500",
+                                  }}
+                                >
+                                  View
+                                </a>
+                              </>
+                            ) : (
+                              "No GPS"
+                            )}
                           </span>
 
-                          <span
-                            className={`badge ${getConfidenceClass(
-                              r.confidence
-                            )}`}
-                          >
-                            {r.confidence
-                              ? `${(
-                                  r.confidence * 100
-                                ).toFixed(0)}% Match`
-                              : "N/A"}
-                          </span>
+                          {view === "my" && (
+                            <span
+                              style={{
+                                fontWeight:
+                                  "700",
+                                color:
+                                  "var(--accent-primary)",
+                              }}
+                            >
+                              +
+                              {
+                                report.points
+                              }{" "}
+                              pts
+                            </span>
+                          )}
                         </div>
                       </div>
-
-                      <hr
-                        style={{
-                          margin: "12px 0",
-                        }}
-                      />
-
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent:
-                            "space-between",
-                          alignItems: "center",
-                          fontSize: "14px",
-                        }}
-                      >
-                        <span
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "4px",
-                            color:
-                              "var(--text-secondary)",
-                          }}
-                        >
-                          <MapPin size={14} />
-
-                          {r.latitude ? (
-                            <>
-                              {`${parseFloat(
-                                r.latitude
-                              ).toFixed(3)}, ${parseFloat(
-                                r.longitude
-                              ).toFixed(3)}`}
-
-                              <a
-                                href={`https://www.google.com/maps?q=${r.latitude},${r.longitude}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{
-                                  marginLeft: "6px",
-                                  padding: "2px 6px",
-                                  background:
-                                    "var(--accent-primary)",
-                                  color: "#fff",
-                                  borderRadius: "4px",
-                                  textDecoration: "none",
-                                  fontSize: "12px",
-                                  fontWeight: "500",
-                                }}
-                              >
-                                View
-                              </a>
-                            </>
-                          ) : (
-                            "No GPS"
-                          )}
-                        </span>
-
-                        {view === "my" && (
-                          <span
-                            style={{
-                              fontWeight: "700",
-                              color:
-                                "var(--accent-primary)",
-                            }}
-                          >
-                            +{r.points} pts
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -790,7 +941,10 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Fullscreen Image Modal */}
+      {/* ========================================================
+          FULLSCREEN IMAGE MODAL
+      ======================================================== */}
+
       {selectedImage && (
         <div
           style={{
@@ -799,15 +953,19 @@ function Dashboard() {
             left: 0,
             width: "100vw",
             height: "100vh",
-            background: "rgba(0, 0, 0, 0.85)",
-            backdropFilter: "blur(10px)",
+            background:
+              "rgba(0, 0, 0, 0.85)",
+            backdropFilter:
+              "blur(10px)",
             zIndex: 9999,
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
             padding: "40px",
           }}
-          onClick={() => setSelectedImage(null)}
+          onClick={() =>
+            setSelectedImage(null)
+          }
         >
           <img
             src={selectedImage}
@@ -820,6 +978,9 @@ function Dashboard() {
               boxShadow:
                 "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
             }}
+            onClick={(event) =>
+              event.stopPropagation()
+            }
           />
 
           <button
@@ -827,7 +988,8 @@ function Dashboard() {
               position: "absolute",
               top: "24px",
               right: "24px",
-              background: "rgba(255, 255, 255, 0.1)",
+              background:
+                "rgba(255, 255, 255, 0.1)",
               border:
                 "1px solid rgba(255, 255, 255, 0.2)",
               color: "white",
@@ -838,9 +1000,12 @@ function Dashboard() {
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
+              justifyContent:
+                "center",
             }}
-            onClick={() => setSelectedImage(null)}
+            onClick={() =>
+              setSelectedImage(null)
+            }
           >
             ×
           </button>
