@@ -448,6 +448,7 @@ app.add_middleware(
     CORSMiddleware,
 
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app|http://localhost:\d+|http://127\.0\.0\.1:\d+|https://.*\.onrender\.com",
 
     allow_credentials=True,
 
