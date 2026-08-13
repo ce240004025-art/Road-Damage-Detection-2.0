@@ -1132,6 +1132,23 @@ async def upload_image(
     # CNN prediction
     # --------------------------------------------------------
 
+    if model is None:
+        model = load_model()
+
+    if model is None:
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "CNN model is not available on the server. "
+                "Check the deployment environment and model path."
+            ),
+        )
+
     try:
 
         predictions = model.predict(
