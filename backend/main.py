@@ -910,6 +910,7 @@ async def upload_image(
     longitude: float = Form(None),
     db=Depends(get_db),
 ):
+    global model
 
     username = username.strip()
 
