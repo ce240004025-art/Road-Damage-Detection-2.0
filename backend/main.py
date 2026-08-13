@@ -11,7 +11,11 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-import tensorflow as tf
+try:
+    import tensorflow as tf
+except Exception:
+    tf = None
+
 from PIL import Image
 import numpy as np
 
@@ -463,38 +467,22 @@ print(
 # CNN MODEL
 # ============================================================
 
-# This works when Render starts the service from backend/
-# and your model is located one level above backend/.
-
+# Render may fail during startup if TensorFlow is not compatible with the runtime.
+# Loading the model lazily prevents the service from crashing on boot while the
+# deployment environment is still being validated.
 MODEL_PATH = os.environ.get(
     "MODEL_PATH",
     "../road_damage_cnn.keras",
 )
 
-
-# Convert to absolute path so the location is easier to debug.
 MODEL_PATH = os.path.abspath(
     MODEL_PATH,
 )
 
-
-print(
-    "Loading CNN model from:",
-    MODEL_PATH,
-)
-
-
-if not os.path.exists(MODEL_PATH):
-
-    raise FileNotFoundError(
-        f"CNN model not found at: {MODEL_PATH}"
-    )
-
-
-model = tf.keras.models.load_model(
-    MODEL_PATH,
-)
-
+MODEL_LOAD_ON_STARTUP = os.environ.get(
+    "MODEL_LOAD_ON_STARTUP",
+    "false",
+).lower() in {"1", "true", "yes", "on"}
 
 CLASS_NAMES = [
     "crack",
@@ -502,15 +490,59 @@ CLASS_NAMES = [
     "pothole",
 ]
 
+model = None
 
-print(
-    "CNN model loaded successfully."
-)
 
-print(
-    "Classes:",
-    CLASS_NAMES,
-)
+def load_model():
+    global model
+
+    if model is not None:
+        return model
+
+    if tf is None:
+        print(
+            "TensorFlow is unavailable. "
+            "Model loading skipped until a compatible runtime is configured."
+        )
+        return None
+
+    if not os.path.exists(MODEL_PATH):
+        print(
+            f"CNN model not found at: {MODEL_PATH}. "
+            "Model loading skipped."
+        )
+        return None
+
+    try:
+        print(
+            "Loading CNN model from:",
+            MODEL_PATH,
+        )
+        model = tf.keras.models.load_model(
+            MODEL_PATH,
+        )
+        print(
+            "CNN model loaded successfully."
+        )
+        print(
+            "Classes:",
+            CLASS_NAMES,
+        )
+        return model
+
+    except Exception as exc:
+        print(
+            f"Failed to load CNN model from {MODEL_PATH}: {exc}"
+        )
+        return None
+
+
+if MODEL_LOAD_ON_STARTUP:
+    load_model()
+else:
+    print(
+        "MODEL_LOAD_ON_STARTUP is disabled; model will be loaded lazily."
+    )
 
 
 # ============================================================
