@@ -572,6 +572,21 @@ def get_db():
         db.close()
 
 
+def serialize_report(report: Report):
+    return {
+        "id": report.id,
+        "image_path": report.image_path,
+        "username": report.username,
+        "damage_type": report.damage_type,
+        "confidence": report.confidence,
+        "points": report.points,
+        "latitude": report.latitude,
+        "longitude": report.longitude,
+        "timestamp": report.timestamp,
+        "image_hash": report.image_hash,
+    }
+
+
 # ============================================================
 # HOME
 # ============================================================
@@ -1279,7 +1294,7 @@ def get_my_reports(
         .all()
     )
 
-    return reports
+    return [serialize_report(report) for report in reports]
 
 
 # ============================================================
@@ -1299,7 +1314,7 @@ def get_public_reports(
         .all()
     )
 
-    return reports
+    return [serialize_report(report) for report in reports]
 
 
 # ============================================================
@@ -1354,7 +1369,7 @@ def get_reports(
         .all()
     )
 
-    return reports
+    return [serialize_report(report) for report in reports]
 
 
 @app.get("/reports/{report_id}/image")
