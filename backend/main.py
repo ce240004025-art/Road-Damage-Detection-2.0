@@ -7,6 +7,7 @@ from fastapi import (
     HTTPException,
     Body,
     BackgroundTasks,
+    Response,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +21,7 @@ from PIL import Image
 import numpy as np
 
 import os
+import io
 import shutil
 import hashlib
 import smtplib
@@ -43,6 +45,7 @@ from sqlalchemy import (
     Integer,
     String,
     Float,
+    LargeBinary,
 )
 from sqlalchemy.orm import (
     sessionmaker,
@@ -204,9 +207,15 @@ class Report(Base):
         index=True,
     )
 
+    image_data = Column(
+        LargeBinary,
+        nullable=True,
+    )
 
-# ============================================================
-# USER TABLE
+    image_mime_type = Column(
+        String,
+        nullable=True,
+    )
 # ============================================================
 
 class User(Base):
@@ -1031,47 +1040,16 @@ async def upload_image(
 
 
     # --------------------------------------------------------
-    # Generate unique filename
+    # Keep the uploaded bytes in the database so image data survives
+    # Render restarts and is available in the app UI.
     # --------------------------------------------------------
 
-    safe_filename = (
-        f"{image_hash[:16]}{extension}"
-    )
+    mime_type = "image/jpeg"
 
-
-    file_path = os.path.join(
-        UPLOAD_DIR,
-        safe_filename,
-    ).replace(
-        "\\",
-        "/",
-    )
-
-
-    # --------------------------------------------------------
-    # Save uploaded image
-    # --------------------------------------------------------
-
-    try:
-
-        with open(
-            file_path,
-            "wb",
-        ) as buffer:
-
-            buffer.write(
-                file_contents
-            )
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Failed to save image: {str(e)}"
-            ),
-        )
-
+    if extension == ".png":
+        mime_type = "image/png"
+    elif extension == ".webp":
+        mime_type = "image/webp"
 
     # --------------------------------------------------------
     # Prepare image for CNN
@@ -1082,45 +1060,25 @@ async def upload_image(
     # --------------------------------------------------------
 
     try:
-
-        image = (
-            Image.open(
-                file_path
-            )
-            .convert("RGB")
-        )
-
+        image = Image.open(
+            io.BytesIO(file_contents)
+        ).convert("RGB")
 
         image = image.resize(
             (128, 128)
         )
-
 
         image_array = np.array(
             image,
             dtype=np.float32,
         )
 
-
         image_array = np.expand_dims(
             image_array,
             axis=0,
         )
 
-
     except Exception as e:
-
-        try:
-
-            os.remove(
-                file_path
-            )
-
-        except Exception:
-
-            pass
-
-
         raise HTTPException(
             status_code=400,
             detail=(
@@ -1137,11 +1095,6 @@ async def upload_image(
         model = load_model()
 
     if model is None:
-        try:
-            os.remove(file_path)
-        except Exception:
-            pass
-
         raise HTTPException(
             status_code=503,
             detail=(
@@ -1159,18 +1112,6 @@ async def upload_image(
 
 
     except Exception as e:
-
-        try:
-
-            os.remove(
-                file_path
-            )
-
-        except Exception:
-
-            pass
-
-
         raise HTTPException(
             status_code=500,
             detail=(
@@ -1254,81 +1195,50 @@ async def upload_image(
     # --------------------------------------------------------
 
     report = Report(
-
-        image_path=file_path,
-
+        image_path="",
         username=username,
-
         damage_type=(
             primary_detection[
                 "damage_type"
             ]
         ),
-
         confidence=(
             primary_detection[
                 "confidence"
             ]
         ),
-
         points=points,
-
         latitude=latitude,
-
         longitude=longitude,
-
         timestamp=(
             datetime.now(
                 timezone.utc
             ).isoformat()
         ),
-
         image_hash=image_hash,
+        image_data=file_contents,
+        image_mime_type=mime_type,
     )
-
 
     db.add(report)
 
-
-    # --------------------------------------------------------
     # Update user score
-    # --------------------------------------------------------
-
     user.total_points += points
 
-
-    # --------------------------------------------------------
-    # Commit database
-    # --------------------------------------------------------
-
     try:
-
         db.commit()
-
         db.refresh(report)
-
+        report.image_path = f"/reports/{report.id}/image"
+        db.commit()
+        db.refresh(report)
     except Exception as e:
-
         db.rollback()
-
-        try:
-
-            os.remove(
-                file_path
-            )
-
-        except Exception:
-
-            pass
-
-
         raise HTTPException(
             status_code=500,
             detail=(
                 f"Failed to save report: {str(e)}"
             ),
         )
-
 
     # --------------------------------------------------------
     # Response
@@ -1447,6 +1357,33 @@ def get_reports(
     return reports
 
 
+@app.get("/reports/{report_id}/image")
+def get_report_image(
+    report_id: int,
+    db=Depends(get_db),
+):
+    report = (
+        db.query(Report)
+        .filter(
+            Report.id == report_id
+        )
+        .first()
+    )
+
+    if not report or not report.image_data:
+        raise HTTPException(
+            status_code=404,
+            detail="Image not found",
+        )
+
+    media_type = report.image_mime_type or "image/jpeg"
+
+    return Response(
+        content=report.image_data,
+        media_type=media_type,
+    )
+
+
 # ============================================================
 # DELETE REPORT
 # ============================================================
@@ -1499,28 +1436,11 @@ def delete_report(
 
 
     # --------------------------------------------------------
-    # Delete image
+    # Delete image from database record
     # --------------------------------------------------------
 
-    if (
-        report.image_path
-        and os.path.exists(
-            report.image_path
-        )
-    ):
-
-        try:
-
-            os.remove(
-                report.image_path
-            )
-
-        except Exception as e:
-
-            print(
-                f"Failed to delete image: {e}"
-            )
-
+    if report.image_data is not None:
+        report.image_data = None
 
     # --------------------------------------------------------
     # Delete database record

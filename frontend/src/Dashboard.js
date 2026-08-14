@@ -58,16 +58,26 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const getImageUrl = (path) => {
-    if (!path) return "";
+  const getImageUrl = (report) => {
+    if (!report) return "";
 
-    if (path.startsWith("http")) {
-      return path;
+    if (report.image_path && report.image_path.startsWith("http")) {
+      return report.image_path;
     }
 
-    const cleanPath = path.startsWith("/") ? path.substring(1) : path;
+    if (report.image_path && report.image_path.startsWith("/")) {
+      return `${API_URL}${report.image_path}`;
+    }
 
-    return `${API_URL}/${cleanPath}`;
+    if (report.image_path) {
+      return `${API_URL}/${report.image_path}`;
+    }
+
+    if (report.id) {
+      return `${API_URL}/reports/${report.id}/image`;
+    }
+
+    return "";
   };
 
   const handleLogout = () => {
@@ -664,7 +674,7 @@ function Dashboard() {
               ) : (
                 <div className="masonry-grid">
                   {reports.map((report, index) => {
-                    const imageUrl = getImageUrl(report.image_path);
+                    const imageUrl = getImageUrl(report);
 
                     return (
                       <div
